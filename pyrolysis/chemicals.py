@@ -3,7 +3,7 @@ import pandas as pd
 import biosteam as bst
 import numpy as np 
 from biosteam import settings
-
+import os
 
 def User_mu_model_isodurene(T , C1 = -12.343  , C2 = 1688.4, C3 = -0.0041458 , C4 = 0, C5 = 0):  # C10H14E6
    if T > 249.46 or T < 471.15:
@@ -45,10 +45,10 @@ def User_mu_model_ethylnaphthalene(T , C1 = -127.59 , C2 = 6980.2 , C3 =17.487, 
       deta_dT = mu_lim * dln_eta_dT
       return mu_lim  + deta_dT * (T - T_lim)
 
-
-
 def load_chemicals():
-    df = pd.read_csv('Data_components_clean.csv', encoding='latin1')
+    data_dir = os.path.dirname(__file__)
+    path = os.path.join(data_dir, 'Data_components_clean.csv')
+    df = pd.read_csv(path, encoding='latin1')
     components = df['ComponentID'][2:].to_list()
 
     chemicals_list = []
