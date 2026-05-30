@@ -104,45 +104,123 @@ def _create_model(context_sys, settings, tea):
     @model.indicator(units='%')
     def IRR(): return round(tea.solve_IRR()*100,2) # Investment return ratio 
 
-    # @model.indicator(units='kg-CO2e/kg')
-    # def GWP_allocation():
-    #     GWP = 'GWP 100yr'
-    #     bst.F.Tyre_Stream.set_CF(GWP, 0)
-    #     bst.F.CarbonActivated.set_CF(GWP,1.0)
-    #     bst.F.Metals.set_CF(GWP,0.20)
-    #     bst.F.Diesel.set_CF(GWP,0.2)
-    #     bst.F.LFO.set_CF(GWP,0.20)
-    #     bst.F.natural_gas.set_CF(GWP,1.5)
-    #     GWP_displacement = context_sys.get_net_impact(key=GWP) / context_sys.get_mass_flow(bst.F.CarbonActivated)
-    #     return    GWP_displacement
+    # GWP USANDO MASA
 
-    @model.indicator(units='kg-CO2e/kg')
-    def GWP_energy():
+    def _gwp_mass_per_kg_for_products(products):
         GWP = 'GWP 100yr'
         bst.F.Tyre_Stream.set_CF(GWP, 0)
-        # bst.F.CarbonActivated.set_CF(GWP,1.0)
-        # bst.F.Metals.set_CF(GWP,0.20)
-        # bst.F.Diesel.set_CF(GWP,0.2)
-        # bst.F.LFO.set_CF(GWP,0.20)
-        bst.F.natural_gas.set_CF(GWP,1.5)
+        bst.F.CarbonActivated.set_CF(GWP,0)
+        bst.F.Metals.set_CF(GWP,0)
+        bst.F.Diesel.set_CF(GWP,0)
+        bst.F.LFO.set_CF(GWP,0)
+        bst.F.Oxygen.set_CF(GWP,0.18)
+        bst.F.natural_gas.set_CF(GWP,0.33) # Antes 1.5 Correcto 0.33
+        # products = (bst.F.CarbonActivated, bst.F.Metals, bst.F.Diesel, bst.F.LFO)
+        # Total impact anual (feeds + net electricity); NO incluye "créditos" de coproductos
+        total_impact = (context_sys.get_total_feeds_impact(GWP)
+                        + context_sys.get_net_electricity_impact(GWP))
+        total_prod_mass = sum(context_sys.get_mass_flow(s) for s in products)
+        if total_prod_mass <= 0:
+            return 0 # float("nan")
+        # Como estás asignando por masa dentro de ese set, kgCO2e/kg es el mismo para todos
+        return float(total_impact / total_prod_mass)
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_mass_CA():
+        products = (bst.F.CarbonActivated) 
+        # Total impact anual (feeds + net electricity); NO incluye "créditos" de coproductos
+        gwp_mass_per_kg_for_products = _gwp_mass_per_kg_for_products(products)
+        return gwp_mass_per_kg_for_products
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_mass_Metals():
+        products = (bst.F.Metals)
+        # Total impact anual (feeds + net electricity); NO incluye "créditos" de coproductos
+        gwp_mass_per_kg_for_products = _gwp_mass_per_kg_for_products(products)
+        return gwp_mass_per_kg_for_products
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_mass_Diesel():
+        products = (bst.F.Diesel) 
+        # Total impact anual (feeds + net electricity); NO incluye "créditos" de coproductos
+        gwp_mass_per_kg_for_products = _gwp_mass_per_kg_for_products(products)
+        return gwp_mass_per_kg_for_products
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_mass_LFO():
+        products = (bst.F.LFO) 
+        # Total impact anual (feeds + net electricity); NO incluye "créditos" de coproductos
+        gwp_mass_per_kg_for_products = _gwp_mass_per_kg_for_products(products)
+        return gwp_mass_per_kg_for_products
+
+    # GWP CON ENERGIA
+    def _gwp_energy_per_kg(stream):
+        GWP = 'GWP 100yr'
+        bst.F.Tyre_Stream.set_CF(GWP, 0)
+        bst.F.CarbonActivated.set_CF(GWP,0)
+        bst.F.Metals.set_CF(GWP,0)
+        bst.F.Diesel.set_CF(GWP,0)
+        bst.F.LFO.set_CF(GWP,0)
+        bst.F.Oxygen.set_CF(GWP,0.18)
+        bst.F.natural_gas.set_CF(GWP,0.33) # Antes 1.5 Correcto 0.33
+        if stream.F_mass <= 0:
+            return float("nan")
         GWP_per_GGE = context_sys.get_property_allocated_impact(
-        key=GWP, name='energy', basis='GGE'  )
-        GWP_energy = (GWP_per_GGE * bst.F.CarbonActivated.get_property('LHV', 'GGE/hr') / bst.F.CarbonActivated.F_mass )
-        return  GWP_energy
+            key=GWP, name='energy', basis='GGE'
+        )  # kgCO2e / GGE
+        try:
+            gge_per_hr = stream.get_property('LHV', 'GGE/hr')  # puede ser 0 si no aplica
+        except Exception:
+            return float("nan")
+        return float(GWP_per_GGE * gge_per_hr / stream.F_mass)  # kgCO2e/kg
 
     @model.indicator(units='kg-CO2e/kg')
-    def GWP_revenue():
+    def GWP_energy_activatedcarbon():
+        return _gwp_energy_per_kg(bst.F.CarbonActivated)
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_energy_metals():
+        return _gwp_energy_per_kg(bst.F.Metals)
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_energy_diesel():
+        return _gwp_energy_per_kg(bst.F.Diesel)
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_energy_LFO():
+        return _gwp_energy_per_kg(bst.F.LFO)
+
+    # GWP por revenue
+    def _gwp_revenue_per_kg(stream):
         GWP = 'GWP 100yr'
         bst.F.Tyre_Stream.set_CF(GWP, 0)
-        # bst.F.CarbonActivated.set_CF(GWP,1.0)
-        # bst.F.Metals.set_CF(GWP,0.20)
-        # bst.F.Diesel.set_CF(GWP,0.2)
-        # bst.F.LFO.set_CF(GWP,0.20)
-        bst.F.natural_gas.set_CF(GWP,1.5)      
+        bst.F.CarbonActivated.set_CF(GWP,0)
+        bst.F.Metals.set_CF(GWP,0)
+        bst.F.Diesel.set_CF(GWP,0)
+        bst.F.LFO.set_CF(GWP,0)
+        bst.F.Oxygen.set_CF(GWP,0.18)
+        bst.F.natural_gas.set_CF(GWP,0.33) # Antes 1.5 Correcto 0.33  
         GWP_per_USD = context_sys.get_property_allocated_impact(
-        key=GWP, name='revenue', basis='USD')
-        GWP_revenue = ( GWP_per_USD * bst.F.CarbonActivated.price)
-        return  GWP_revenue
+            key=GWP, name='revenue', basis='USD'
+        )  # kgCO2e / USD
+        price = stream.price or 0.0  # USD/kg
+        return float(GWP_per_USD * price)  # kgCO2e/kg
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_revenue_activatedcarbon():
+        return _gwp_revenue_per_kg(bst.F.CarbonActivated)
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_revenue_metals():
+        return _gwp_revenue_per_kg(bst.F.Metals)
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_revenue_diesel():
+        return _gwp_revenue_per_kg(bst.F.Diesel)
+
+    @model.indicator(units='kg-CO2e/kg')
+    def GWP_revenue_LFO():
+        return _gwp_revenue_per_kg(bst.F.LFO)
 
     @model.indicator(units='%wt')
     def Carbon_Yield(): return bst.F.MainReactor.carbon_yield 
@@ -157,7 +235,17 @@ def _create_model(context_sys, settings, tea):
                     distribution='triangular',
                     coupled=True)
     def set_P_moisture(value_P_moisture):
-        bst.F.DescomposerR1.P_moisture = round(value_P_moisture,2)
+        moisture = round(value_P_moisture, 2)
+
+        # 1) actualizar humedad en el reactor
+        bst.F.MainReactor.P_moisture = moisture
+
+        # 2) mantener constante la capacidad seca nominal
+        dry_capacity = bst.F.MainReactor.processing_capacity  # kg/hr dry
+        wet_capacity = dry_capacity / (1 - moisture/100)
+
+        # 3) actualizar la corriente de alimentación húmeda
+        bst.F.Tyre_Stream.imass['Tyre'] = wet_capacity
 
     # Esta si se usa: P_ash = U_ash
     @model.parameter(element='Ash', units='wt%',  
@@ -166,7 +254,8 @@ def _create_model(context_sys, settings, tea):
                     distribution='triangular',
                     coupled=True)
     def set_U_ash(value_ash):
-        bst.F.DescomposerR1.U_ash = round(value_ash,2)
+        bst.F.MainReactor.U_ash = round(value_ash,2)
+        # bst.F.DescomposerR1.U_ash = round(value_ash,2)
 
     # Parametros independientes U
     @model.parameter(element='U_carbon', units='wt%',  
@@ -175,7 +264,8 @@ def _create_model(context_sys, settings, tea):
                     distribution='triangular',
                     coupled=True)
     def set_U_carbon(value_c):
-        bst.F.DescomposerR1.U_carbon = round(value_c,2)
+        # bst.F.DescomposerR1.U_carbon = round(value_c,2)
+        bst.F.MainReactor.U_carbon = round(value_c,2)
 
     @model.parameter(element='U_h', units='wt%',
                     bounds=(6.56, 7.99), 
@@ -183,7 +273,7 @@ def _create_model(context_sys, settings, tea):
                     distribution='triangular',
                     coupled=True)
     def set_U_h(value_h):
-        bst.F.DescomposerR1.U_h = round(value_h,2)
+        bst.F.MainReactor.U_h = round(value_h,2)
 
     @model.parameter(element='U_o', units='wt%', 
                     bounds=(1.29, 10.79), 
@@ -191,7 +281,7 @@ def _create_model(context_sys, settings, tea):
                     distribution='triangular', 
                     coupled= True)
     def set_U_o(value_o):
-        bst.F.DescomposerR1.U_o = round(value_o,2)
+        bst.F.MainReactor.U_o = round(value_o,2)
 
     @model.parameter(element='U_n', units='wt%', 
                     bounds=(0.3, 1.0), 
@@ -199,7 +289,7 @@ def _create_model(context_sys, settings, tea):
                     distribution='triangular', 
                     coupled= True)
     def set_U_n(value_n):
-        bst.F.DescomposerR1.U_n = round(value_n,2)
+        bst.F.MainReactor.U_n = round(value_n,2)
 
     @model.parameter(element='U_s', units='wt%', 
                     bounds=(0.87, 2.46),
@@ -207,7 +297,7 @@ def _create_model(context_sys, settings, tea):
                     distribution='triangular',
                     coupled=True)
     def set_U_s(value_s):
-        bst.F.DescomposerR1.U_s = round(value_s,2) 
+        bst.F.MainReactor.U_s = round(value_s,2) 
         
     Treactor_R2 = bst.F.MainReactor.Treac
     lb , ub = 500 + 273.15  ,  800 + 273.15
@@ -217,7 +307,7 @@ def _create_model(context_sys, settings, tea):
         bst.F.MainReactor.Treac = Treaction
 
     carbon_conversion_R2 = bst.F.MainReactor.carbon_conversion
-    lb , ub = 30 , 80
+    lb , ub = 30 , 60
     @model.parameter(element = 'carbonconversion', units = '%wt', 
                      bounds = (lb,ub) , 
                      baseline= carbon_conversion_R2, 

@@ -130,3 +130,4 @@ def analysis_df(file='default.csv', file_out='default.xlsx'):
         vars_mean_by_class_df.to_excel(writer, sheet_name="vars_mean_por_clase")
         vars_std_by_class_df.to_excel(writer, sheet_name="vars_std_por_clase")
         diff_AD_df.to_excel(writer, sheet_name="A_menos_D")
+    return  df_final, vars_mean_by_class_df, vars_std_by_class_df, irr_fedi_by_class_df
