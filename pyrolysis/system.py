@@ -22,6 +22,7 @@ import os
 
 __all__ = ('Descomposer','Reactor', 
            'Naptha_PartialOxidation', 'Hydrotreatment',
+           'Mechanical_Activation', 'PyrolysisReactor', 
            'ThermalOxidizer', 'create_system')
 
 
@@ -377,7 +378,7 @@ class Reactor(bst.Unit):
         # Enthalpy out
         duty = H_out_vapor_out - H_out_vapour_in   #   KJ/hr
         # Recalcular la parte de las entalipa, la estimada con los gases esta muy abajo de lo esperado... O hacerlo mas riguroso. 
-        self.duty =  duty*1.3 # Correcting factor because carbon and ash enthalpies are not considered. 
+        self.duty =  duty # *1.3 # Correcting factor because carbon and ash enthalpies are not considered. 
         # Temperatures
         T_in = feed.T  # Temperature of the inlet stream 
         T_out = product1.T # Temperature of outlet stream
@@ -736,7 +737,7 @@ class Hydrotreatment(bst.Unit):
         self.model.A = pyo.Set(initialize=range(self.atoms_matrix.shape[0])) 
         self.model.atom_balance = pyo.Constraint(self.model.A, rule=self.atom_balance_rule)
 
-        solver = pyo.SolverFactory('ipopt')
+        solver = pyo.SolverFactory('ipopt')  # z 
         solver.options['tol'] = 1e-8
         solver.options['constr_viol_tol'] = 1e-16
         solver.options['acceptable_tol'] = 1e-6
@@ -939,10 +940,442 @@ class ThermalOxidizer(bst.Unit):
         C = self.baseline_purchase_costs
         C['Vessels'] = N * 918300. * (vessel_volume / 13.18)**0.6
 
+class Mechanical_Activation(bst.Unit):
+    _N_ins = 1     # tyres, syngas_recycle, air
+    _N_outs = 1    # raw_gas, metals, carbon, emissions
+    _units = {'Duty': 'kJ/hr'}
+
+    def _init(self, processing_capacity=None):
+        self.processing_capacity = processing_capacity
+        
+    def _run(self):
+        carbon = self.ins[0]
+        carbon_activated = self.outs[0]
+
+        carbon_activated.empty()
+        carbon_activated.phase = 's'
+        carbon_activated.copy_like(carbon)
+
+    def _design(self):
+        """ 
+        Servicios auxiliares
+        """
+        self.duty = 1
+
+
+    def _cost(self):
+
+        if self.processing_capacity == 6250:
+            Refinamiento = 7280000
+            Instalacion  =   180000
+        elif self.processing_capacity == 4166:
+            Refinamiento = 7280000
+            Instalacion  =   180000
+        elif self.processing_capacity == 2500:
+            Refinamiento = 4270000
+            Instalacion  =   98000
+        else:
+            raise ValueError(f'processing_capacity={self.processing_capacity} no soportado en _cost (solo 6250, 4166, 2500).')
+
+        self.baseline_purchase_costs['Unit'] = Refinamiento + Instalacion
+        self.F_D['Unit'] = self.F_P['Unit'] = self.F_M['Unit'] = 1.0
+        
+class PyrolysisReactor(bst.Unit):
+    _N_ins = 3     # tyres, syngas_recycle, air
+    _N_outs = 4    # raw_gas, metals, carbon, emissions
+    _units = {'Duty': 'kJ/hr'}
+
+    def _init(self,
+              # --- parámetros de R1 ---
+              Ttyres=None, P=None,
+              P_moisture=None, P_ash=None,
+              U_carbon=None, U_h=None, U_n=None, U_s=None, U_o=None,
+              P_volatilemateria=None,
+              # --- parámetros de R2 ---
+              Treac=None, Preac=None,
+              processing_capacity=None,
+              carbon_conversion=None,
+              settings=None):
+
+        # R1
+        self.Ttyres = Ttyres
+        self.P = P
+        self.P_moisture = P_moisture
+        self.P_ash = P_ash
+        self.U_carbon = U_carbon
+        self.U_h = U_h
+        self.U_n = U_n
+        self.U_s = U_s
+        self.U_o = U_o
+        self.P_volatilemateria = P_volatilemateria
+
+        # R2
+        self.Treac = Treac
+        self.Preac = Preac
+        self.processing_capacity = processing_capacity
+        self.carbon_conversion = carbon_conversion
+        self.settings = settings
+
+        # duties
+        self.duty1 = 0.0
+        self.duty2 = 0.0
+        self.duty  = 0.0
+
+        # heating bookkeeping
+        self.Q_deficit = 0.0
+        self.Q_from_syngas = 0.0
+        self.Q_from_natural_gas = 0.0
+
+        # Data
+        self._get_MW()
+        self._load_kinetik_data()
+        self._get_kinetic_data()
+        self._load_CP_data()
+
+    # -------------------- R1 helpers --------------------
+    def _load_CP_data(self):
+        output_path = os.path.join('pyrolysis', 'Cp_Data.csv')
+        self.df_Cp = pd.read_csv(output_path)
+
+    def Cp_ij(self, T, j, param):
+        return param[j,0] + param[j,1]*T + param[j,2]*T**2 + param[j,3]*T**3
+
+    def Cp_dl(self, T, w, param):
+        return sum(w[j] * self.Cp_ij(T, j, param) for j in range(len(w)))
+
+    def _Heat_Capacity_Kirov_Correlations(self, Flow, T_ref, Tint,
+                                          moisture, fixed_carbon,
+                                          primary_volatile_matter, secondary_volatile_matter, ash):
+        param = np.array([[1.0, 0 , 0 , 0 ],
+                          [0.165, 6.8e-4, -4.2e-7, 0 ],
+                          [0.395, 8.1e-4, 0 , 0 ],
+                          [0.71, 6.1e-4, 0 , 0 ],
+                          [0.18, 1.4e-4, 0 , 0] ])
+        if primary_volatile_matter > 10:
+            weights = np.array([moisture, fixed_carbon, primary_volatile_matter, secondary_volatile_matter, ash])
+            weights = weights/(1 - moisture/100)
+            val = 10.3
+            weights[3] = weights[2] - val
+            weights[2] = val
+        else:
+            weights = np.array([moisture, fixed_carbon, primary_volatile_matter, secondary_volatile_matter, ash])
+
+        integral, _ = quad(self.Cp_dl, T_ref, Tint, args=(weights, param))
+        Enthalpy_flow = integral * Flow * 1000 / 3600
+        return Enthalpy_flow  # cal/sec
+
+    def Cp_model(self, T, C):
+        term1 = C[0]
+        term2 = C[1] * (((C[2]/T) / np.sinh(C[2]/T))**2)
+        term3 = C[3] * (((C[4]/T) / np.cosh(C[4]/T))**2)
+        return term1 + term2 + term3
+
+    def integrar_Cp_vapour_fase(self, Tref, Tint, C):
+        resultado, _ = quad(self.Cp_model, Tref, Tint, args=(C))
+        return resultado
+
+    def _H_out_vapour_fase_from_flows(self, flows_gas, T_out_K):
+        Tref, Tint = 25+273.15, T_out_K
+        species = [sp[0] for sp in flows_gas]
+        flows = np.array([sp[1] for sp in flows_gas])  # kg/hr
+        integral = 0.0
+        for i, specie in enumerate(species):
+            C = self.df_Cp.loc[self.df_Cp['common _names'] == specie, ['1','2','3','4','5']].values[0]
+            mw = self.df_Cp.loc[self.df_Cp['common _names'] == specie, 'mw'].values[0]
+            integral += self.integrar_Cp_vapour_fase(Tref, Tint, C)/mw * flows[i] * 1000/3600
+        return integral
+
+    def _H_in_tyres(self, Tyre_flow_kgph):
+        Ttyres_C = 20
+        T_ref = 25
+        return self._Heat_Capacity_Kirov_Correlations(
+            Tyre_flow_kgph, T_ref, Ttyres_C,
+            self.P_moisture, self.U_carbon,
+            self.P_volatilemateria, 0, self.P_ash
+        )
+
+    # -------------------- R2 helpers --------------------
+    def _get_MW(self):
+        self.MW_list = self.settings.chemicals.MW
+
+    def _load_kinetik_data(self):
+        self.df_kinetics = pd.read_csv(os.path.join('pyrolysis', 'kinetic_main_original.csv'))
+
+    def _get_kinetic_data(self):
+        k_constants, n_constants, energy_constants, type_of_reaction = [], [], [], []
+        dfk = self.df_kinetics
+        number_reactions = 0
+        for i in range(dfk.shape[0]):
+            if dfk.loc[i, 'Available'] == 'Yes':
+                k_constants.append(dfk.loc[i,'k_constant'])
+                n_constants.append(dfk.loc[i,'n'])
+                energy_constants.append(dfk.loc[i,'E[kj/mol]'])
+                type_of_reaction.append(dfk.loc[i,'Dependant_index'])
+                number_reactions += 1
+
+        self.number_reactions = number_reactions
+        self.k_constants = np.array(k_constants)
+        self.E_ = np.array(energy_constants) * 1000
+        self.n_ = np.array(n_constants)
+        self.type_of_reaction = type_of_reaction
+
+        self.H2_index, self.S_index, self.O2_index = 3, 5, 6
+
+        stoich = pd.read_csv(os.path.join('pyrolysis','stoichometry_main.csv'), header=None).to_numpy()
+        stoich[:,0:8] *= -1
+        self.stoichiometry = stoich
+
+    def _reaction_rate(self, x, type_of_reaction, k, n, E, T):
+        gas_flow_mass = sum(x[i]*self.MW_list[i] for i in range(3, len(x)))
+        if gas_flow_mass <= 0:
+            return 0.0
+
+        if type_of_reaction == 1:
+            X_H2 = (x[self.H2_index]*2.01568) / gas_flow_mass
+            return k*(T**n)*np.exp(-E/(R*T))*X_H2
+        elif type_of_reaction == 2:
+            X_O2 = (x[self.O2_index]*31.999) / gas_flow_mass
+            return k*(T**n)*np.exp(-E/(R*T))*X_O2
+        elif type_of_reaction == 3:
+            X_S = (x[self.S_index]*32.065) / gas_flow_mass
+            return k*(T**n)*np.exp(-E/(R*T))*X_S
+        else:
+            return 0.0
+
+    def ode(self, t, x):
+        rates = []
+        for i in range(self.number_reactions):
+            rates.append(self._reaction_rate(
+                x, self.type_of_reaction[i],
+                self.k_constants[i], self.n_[i], self.E_[i],
+                T=self.Treac
+            ))
+        rates = np.array(rates).reshape([-1, 1])
+        dy = rates * self.stoichiometry
+        return dy.sum(axis=0)
+
+    # -------------------- combustión de syngas para utilidad --------------------
+    def _combust_stream(self, fuel_stream, air_stream):
+        """
+        Quema COMPLETO fuel_stream con aire estequiométrico.
+        Retorna: (Q_release [kJ/hr], flue_stream)
+        """
+        if fuel_stream.F_mass <= 1e-12:
+            air_stream.empty()
+            flue = bst.Stream(None, phase='g'); flue.empty()
+            return 0.0, flue
+
+        flue = bst.Stream(None, phase='g')
+        flue.copy_flow(fuel_stream)
+
+        combustion = self.settings.chemicals.get_combustion_reactions()  # <- FIX
+
+        air_stream.empty()
+        combustion.force_reaction(flue)
+
+        O2_req = -flue.imass['O2']
+        if O2_req < 0: O2_req = 0.0
+
+        air_stream.imass['O2'] = O2_req
+        air_stream.imass['N2'] = air_stream.imass['O2'] * 79 / 21
+
+        flue.mol += air_stream.mol
+
+        H_before = fuel_stream.Hnet
+        combustion.force_reaction(flue)
+        H_after = flue.Hnet
+
+        H_rxn = H_after - H_before
+        Q_release = max(0.0, -H_rxn)
+        return Q_release, flue
+
+    def _natural_gas_for_heat(self, Q_needed):
+        ng = bst.Stream(None, phase='g')
+        if Q_needed <= 0:
+            ng.empty()
+            return ng
+
+        # intenta encontrar CH4/methane
+        fuel_key = None
+        for key in ('methane', 'CH4'):
+            try:
+                ng.imass[key] = 1.0
+                ng.empty()
+                fuel_key = key
+                break
+            except Exception:
+                ng.empty()
+                fuel_key = None
+
+        if fuel_key is None:
+            raise ValueError("No encuentro 'CH4' o 'methane' en tu thermo. Agrega CH4/methane a settings.chemicals.")
+
+        LHV_kJ_per_kg = 50000.0
+        m_kgph = Q_needed / LHV_kJ_per_kg
+        ng.imass[fuel_key] = m_kgph
+        return ng
+
+    # -------------------- RUN --------------------
+    def _run(self):
+        tyres, syngas_recycle, air = self.ins
+        raw_gas, metals, carbon, emissions = self.outs  # <- raw_gas
+
+        Tyre_flow = tyres.F_mass
+
+        # ====== (1) DESCOMPOSER ======
+        H2OF, ASHF = self.P_moisture, self.P_ash
+        CF, H2F = self.U_carbon, self.U_h
+        N2F, SF = self.U_n, self.U_s
+        O2F = self.U_o
+
+        self.H2OOUT = Tyre_flow*(H2OF/100)
+        self.ASHOUT = Tyre_flow*(ASHF/100*(1- H2OF/100))
+        self.COUT   = Tyre_flow*(CF/100*(1- H2OF/100))
+        self.H2OUT  = Tyre_flow*(H2F/100*(1- H2OF/100))
+        self.N2OUT  = Tyre_flow*(N2F/100*(1- H2OF/100))
+        self.SOUT   = Tyre_flow*(SF/100*(1- H2OF/100))
+        self.O2OUT  = Tyre_flow*(O2F/100*(1- H2OF/100))
+
+        flows_gas_R1 = [('water', self.H2OOUT),
+                        ('hydrogen', self.H2OUT),
+                        ('nitrogen', self.N2OUT),
+                        ('sulfur', self.SOUT),
+                        ('molecular oxygen', self.O2OUT)]
+        self.out_flow_gas_R1 = flows_gas_R1
+
+        # Duty 1
+        H_in = self._H_in_tyres(Tyre_flow)  # cal/s
+        H_out_vap = self._H_out_vapour_fase_from_flows(flows_gas_R1, self.Treac)
+        self.duty1 = max(0.0, (H_out_vap - H_in) * 15.072479976493)  # kJ/hr
+
+        # ====== (2) MAIN REACTOR ======
+        tyre_init = 0.0
+        ash_init  = 0.0
+        carbon_init   = (self.COUT/12.0) / 3600.0
+        hydrogen_init = (self.H2OUT/2.01568) / 3600.0
+        nitrogen_init = (self.N2OUT/28.0134) / 3600.0
+        sulfur_init   = (self.SOUT/32.065) / 3600.0
+        oxygen_init   = (self.O2OUT/31.999) / 3600.0
+        water_init    = (self.H2OOUT/18.01528) / 3600.0
+
+        self.initial_conditions = [tyre_init, ash_init, carbon_init, hydrogen_init,
+                                   nitrogen_init, sulfur_init, oxygen_init, water_init]
+        self.initial_conditions.extend([0.0] * (len(self.settings.chemicals) - 8))
+
+        def rendimiento_event(t, y):
+            flujo_producto = y[2] * self.MW_list[2] * 3600.0
+            denom = (self.initial_conditions[2] * self.MW_list[2] * 3600.0)
+            consumido = denom - flujo_producto
+            rendimiento = consumido/denom if denom > 0 else 0.0
+            return rendimiento - self.carbon_conversion/100.0
+
+        rendimiento_event.terminal = True
+
+        self.diameter = 0.5
+        self.max_length = 8.0
+        V = (np.pi * self.max_length * (self.diameter/2)**2)
+
+        sol = solve_ivp(self.ode, [0, V], self.initial_conditions,
+                        events=rendimiento_event, method='RK45', max_step=0.001)
+
+        results = sol.y.T
+        self.final_flows = (results * self.MW_list) * 3600.0  # kg/hr
+        carbon_consumido = (self.initial_conditions[2]* self.MW_list[2] * 3600) - self.final_flows[-1,2]
+        self.real_Carbonconversion =  carbon_consumido/( (self.initial_conditions[2]* self.MW_list[2] * 3600) )
+
+        # carbon_yield
+        self.carbon_yield = self.final_flows[-1, 2] / self.processing_capacity
+
+        # ====== (3) Construye salidas BioSTEAM ======
+        flows_gas = []
+        for i, c in enumerate(self.settings.chemicals):
+            if i > 2 and i < len(self.settings.chemicals):
+                flows_gas.append((c.common_name, self.final_flows[-1, i]))
+
+        flows_solid1 = [('Ash', self.ASHOUT)]
+        flows_solid2 = [('carbon', self.final_flows[-1, 2])]
+
+        vapor = bst.Stream(None, phase='g', T=self.Treac, P=self.Preac, units='kg/hr', **dict(flows_gas))
+        solid1 = bst.Stream(None, phase='s', T=self.Treac, P=self.Preac, units='kg/hr', **dict(flows_solid1))
+        solid2 = bst.Stream(None, phase='s', T=self.Treac, P=self.Preac, units='kg/hr', **dict(flows_solid2))
+
+        raw_gas.empty()
+        raw_gas.phase = 'g'
+        raw_gas.copy_like(vapor)
+
+        metals.empty()
+        metals.phase = 's'
+        metals.copy_like(solid1)
+
+        carbon.empty()
+        carbon.phase = 's'
+        carbon.copy_like(solid2)
+
+        # ====== (4) Duty 2 ======
+        vapor_in = bst.Stream(None, phase='g', T=self.Treac, P=self.Preac, units='kg/hr', **dict(flows_gas_R1))
+        H_out_vapour_in = vapor_in.Hnet
+        H_out_vapor_out = vapor.Hnet
+        duty2_raw = H_out_vapor_out - H_out_vapour_in
+        self.duty2 = duty2_raw * 1.3
+
+        self.duty = self.duty1 + self.duty2
+
+        # ====== (5) Heat from recycled syngas + NG deficit ======
+        emissions.empty()
+        emissions.phase = 'g'
+
+        Q_syngas, flue_syngas = self._combust_stream(syngas_recycle, air)
+        self.Q_from_syngas = Q_syngas
+        emissions.copy_like(flue_syngas)
+
+        self.Q_deficit = max(0.0, self.duty - self.Q_from_syngas)
+
+        if self.Q_deficit > 0:
+            ng_fuel = self._natural_gas_for_heat(self.Q_deficit)
+            air_ng = bst.Stream(None, phase='g')
+            Q_ng, flue_ng = self._combust_stream(ng_fuel, air_ng)
+            self.Q_from_natural_gas = Q_ng
+            emissions.mol += flue_ng.mol
+        else:
+            self.Q_from_natural_gas = 0.0
+
+    # ---- costos (sin cambios) ----
+    def compute_furnace_purchase_cost(self, Q, CE):
+        return exp(-0.15241 + 0.785*ln(Q)) * CE / 567
+
+    def _cost(self):
+        Q = self.duty1 * 0.947817
+        if Q <= 0:
+            self.baseline_purchase_costs['Descomposer'] = 0.0
+        else:
+            self.baseline_purchase_costs['Descomposer'] = self.compute_furnace_purchase_cost(Q, bst.CE)
+        self.F_D['Descomposer'] = self.F_P['Descomposer'] = self.F_M['Descomposer'] = 1.0
+
+        if self.processing_capacity == 6250:
+            Pyrolysis_unit = 24544000.00
+            Nitrogen_unit  =   495000.00
+        elif self.processing_capacity == 4166:
+            Pyrolysis_unit = 17230000.00
+            Nitrogen_unit  =   495000.00
+        elif self.processing_capacity == 2500:
+            Pyrolysis_unit = 11870000.00
+            Nitrogen_unit  =   495000.00
+        else:
+            raise ValueError(f'processing_capacity={self.processing_capacity} no soportado en _cost (solo 6250, 4166, 2500).')
+
+        self.baseline_purchase_costs['MainReactor'] = Pyrolysis_unit + Nitrogen_unit
+        self.F_D['MainReactor'] = self.F_P['MainReactor'] = self.F_M['MainReactor'] = 1.0
 
 def create_system(processing_capacity,x,y, settings, type = None):
     
     processing_capacity = processing_capacity
+
+    # Put all results on a dry basis
+    dry_processing_capacity = processing_capacity   # kg/hr dry basis
+    baseline_moisture = 4.0                        # wt% wet basis
+
+    wet_feed_capacity = dry_processing_capacity / (1 - baseline_moisture/100)
+    # print(processing_capacity)
     with bst.System('example') as context_sys:
         if type == None:
             target_conversion = x
@@ -965,35 +1398,66 @@ def create_system(processing_capacity,x,y, settings, type = None):
             target_price_diesel = 1137.50/1000
             target_temperature_reactor = y
         # Corrientes reciclos
+        syngas_recycle = bst.Stream('syngas_recycle')
+        air = bst.Stream('air')
         Napthas_recycle = bst.Stream('Napthas_recycle')
         Hydrogen_generation = bst.Stream('Hydrogen_generation')
 
-        Tyre_stream = bst.Stream('Tyre_Stream', phase='s',Tyre = processing_capacity,  T= 20 + 273.15, units='kg/hr', price=  0.14) 
-        # This units represent a full reactor of pyrolisis.   
-        R1 = Descomposer('DescomposerR1', ins=(Tyre_stream), Ttyres = 20 + 273.15 , 
-                        Treac = 500 + 273.15 , P=101325,   
-                        P_moisture = 4, P_ash = 2.5, U_carbon = 83.3 ,
-                        U_h = 7.5 , U_n = 0.6 ,U_s = 1.6 , 
-                        U_o = 4.5, P_volatilemateria = 64.6)               
-
+        # Feed stream
+        Tyre_stream = bst.Stream('Tyre_Stream', phase='s',Tyre = wet_feed_capacity,  T= 20 + 273.15, units='kg/hr', price=  0.14) 
+        
         # Reactor principal 
         Metal = bst.Stream('Metals', price = 237/1000)
         # El precio del carbono puede variar dependiendo de la region
-        Carbon =  bst.Stream('CarbonActivated', price = target_price_carbon)  # https://businessanalytiq.com/procurementanalytics/index/activated-carbon-prices/
-        R2 = Reactor('MainReactor', outs= ('stream1', Metal, Carbon), 
-                    Treac = target_temperature_reactor, Preac=101325, velocity= 0.0001, processing_capacity = processing_capacity,
-                    carbon_conversion = target_conversion, settings = settings,  ins=(R1-0)) 
+        Carbon =  bst.Stream('CarbonActivated', price = target_price_carbon) 
+
+
+        R2 = PyrolysisReactor('MainReactor',
+                        ins=(Tyre_stream, syngas_recycle, air),
+                        outs=('pyrolitic_gas', Metal, 'carbon_post', 'emissiones'),
+                        # R1 params
+                        Ttyres=20+273.15, P=101325,
+                        P_moisture= baseline_moisture, P_ash=2.5, U_carbon=83.3,
+                        U_h=7.5, U_n=0.6, U_s=1.6, U_o=4.5, P_volatilemateria=64.6,
+                        # R2 params
+                        Treac=target_temperature_reactor, Preac=101325,
+                        processing_capacity=dry_processing_capacity, carbon_conversion=target_conversion,
+                        settings=settings)
+        MA = Mechanical_Activation('CarbonTreatment', ins = (R2-2), outs = (Carbon), processing_capacity=processing_capacity)
 
         # Cooler1 
-        cooler1 = HXutility('Cooler1',  outs= 'cooled_stream1', T= 30+273.150, ins=(R2-0))
+        cooler1 = HXutility('Cooler1',  outs= 'cooled_stream1', 
+                            T= 30+273.150, ins=(R2-0))
         # Flashes
-        F1 = Flash('Flash1', outs=('syngas', 'liquid1'), P=101325, T=30 +273.15 , ins= (cooler1-0) ) 
+        F1 = Flash('Flash1', outs=('syngas', 'liquid1'),
+                    P=101325, T=30 +273.15 , 
+                    ins= (cooler1-0) ) 
         
-        # PowerGeneration -  BoilerTurbogenerators
+
+        S1 = bst.Splitter('S1', ins=(F1-0,),
+                        outs=(syngas_recycle, bst.Stream('syngas_excess')),
+                        split=0.5)
+
+
+        @S1.add_specification(run=True)
+        def adjust_syngas_recycle_split():
+            duty = getattr(R2, 'duty', 0.0)
+            if duty <= 0:
+                S1.split[:] = 0.0
+                return
+
+            syngas_vapor, = S1.ins
+            tmp_air = bst.Stream(None, phase='g')
+
+            Q_full, _ = R2._combust_stream(syngas_vapor, tmp_air)
+            f = 0.0 if Q_full <= 1e-9 else duty / Q_full
+            S1.split[:] = min(1.0, max(0.0, f))
+
+        # PowerGeneration -  BoilerTurbogenerators  # S1-1
         BT = bst.BoilerTurbogenerator('BT',
-                    (F1-0, '', 'boiler_makeup_water', 'natural_gas', 'waste1', 'waste2'),
+                    (S1-1, '', 'boiler_makeup_water', 'natural_gas', 'waste1', 'waste2'),
                     boiler_efficiency=0.95, turbogenerator_efficiency=0.95)
-        # BT = bst.Boiler('BT',ins= (F1-0)) 
+
         
         F2 = Flash('Flash2', outs=('naptha', 'diesel_hfo'), P=101325, T=160+273.15, ins =(F1-1) )
         # Agregar una restriccion para que los compuestos que contengan azufre se vayan todos a los fondos
@@ -1047,9 +1511,9 @@ def create_system(processing_capacity,x,y, settings, type = None):
         D2.check_LHK = False   
 
         # Mixer 2
-        Mix2 = bst.Mixer('Mixer2', ins=(R3-0,R4-1 ), outs='mixed_stream') # Falta el syngas F1-0 
+        Mix2 = bst.Mixer('Mixer2', ins=(R3-0,R4-1,R2-3), outs='mixed_stream') 
 
-        # Thermaloxidazer
+        # Thermaloxidazer ( QUEMA TODO )
         OxRedox = ThermalOxidizer('OxRedox', ins = (Mix2-0)  )
 
     context_sys.set_tolerance(mol=1e-2, rmol=1e-2)
@@ -1076,10 +1540,10 @@ def create_system(processing_capacity,x,y, settings, type = None):
     #LCA 
     GWP = 'GWP 100yr'
     bst.F.Tyre_Stream.set_CF(GWP, 0)
-    bst.F.CarbonActivated.set_CF(GWP,1.0)
-    # bst.F.Metals.set_CF(GWP,0.20)
-    # bst.F.Diesel.set_CF(GWP,0.20)
-    # bst.F.LFO.set_CF(GWP,0.20)
+    bst.F.CarbonActivated.set_CF(GWP,0)
+    bst.F.Metals.set_CF(GWP,0)
+    bst.F.Diesel.set_CF(GWP,0)
+    bst.F.LFO.set_CF(GWP,0)
     bst.F.Oxygen.set_CF(GWP,0.18)
     bst.F.natural_gas.set_CF(GWP,0.33) # Antes 1.5 Correcto 0.33
 
@@ -1099,21 +1563,51 @@ def create_system(processing_capacity,x,y, settings, type = None):
         CF =  1.0 
     )
     
-    # Displacement allocation [kg-CO2e / kg-ethanol]
-    GWP_displacement = context_sys.get_net_impact(key=GWP) / context_sys.get_mass_flow(bst.F.CarbonActivated)
-    # Energy allocation by gasoline gallon equivalent (GGE)
-    GWP_per_GGE = context_sys.get_property_allocated_impact(
-        key=GWP, name='energy', basis='GGE', # Energy basis defaults to 'kJ'
-    ) # kg-CO2e / GGE
 
-    GWP_energy = (GWP_per_GGE * bst.F.CarbonActivated.get_property('LHV', 'GGE/hr') / bst.F.CarbonActivated.F_mass )
-    # kg-CO2e / kg sugarcane ethanol
+    # --- Productos a reportar ---
+    products = {
+        "activatedcarbon": bst.F.CarbonActivated,
+        "metals": bst.F.Metals,
+        "diesel": bst.F.Diesel,
+        "LFO": bst.F.LFO,
+    }
 
-    # Economic/revenue allocation
-    GWP_per_USD = context_sys.get_property_allocated_impact(
-        key=GWP, name='revenue', basis='USD') # kg-CO2e / US
-    GWP_revenue = ( GWP_per_USD * bst.F.CarbonActivated.price) # kg-CO2e / kg-ethanol
+    # --- Energy allocation ---
+    gwp_energy = {}
+    GWP_per_GGE = context_sys.get_property_allocated_impact(key=GWP, name="energy", basis="GGE")
+    for k, s in products.items():
+        try:
+            if s.F_mass <= 0:
+                gwp_energy[k] = float("nan")
+            else:
+                gge_per_hr = s.get_property("LHV", "GGE/hr")  # 0 para corrientes sin LHV
+                gwp_energy[k] = float(GWP_per_GGE * gge_per_hr / s.F_mass)
+        except Exception:
+            # Por si algún stream no soporta la propiedad, o LHV no aplica
+            gwp_energy[k] = float("nan")
 
+    # --- Revenue allocation = kgCO2e/USD * precio(USD/kg) => kgCO2e/kg 
+    gwp_revenue = {}
+    GWP_per_USD = context_sys.get_property_allocated_impact(key=GWP, name="revenue", basis="USD")
+    for k, s in products.items():
+        gwp_revenue[k] = float(GWP_per_USD * (s.price or 0.0))
+
+    # --- Mass allocation
+    gwp_mass = {}
+    total_impact = (
+        context_sys.get_total_feeds_impact(GWP)
+        #+ context_sys.get_net_electricity_impact(GWP)
+    )
+    total_prod_mass = sum(context_sys.get_mass_flow(s) for s in products.values())
+    for k, s in products.items():
+        total_prod_mass = context_sys.get_mass_flow( s ) #for s in products.values())
+        m = context_sys.get_mass_flow(s)
+        gwp_mass[k] = float(total_impact / total_prod_mass) if total_prod_mass > 0 else float("nan")
+
+    GWP_results = {"energy_kgCO2e_per_kg": gwp_energy,
+                    "revenue_kgCO2e_per_kg": gwp_revenue,
+                    "mass_kgCO2e_per_kg": gwp_mass}
+    
     # FEDI calculations
     output_folder = 'pyrolysis'
     os.makedirs(output_folder, exist_ok=True)
@@ -1145,11 +1639,11 @@ def create_system(processing_capacity,x,y, settings, type = None):
     Ignition_mixture =sum(z_frac*df_data['Ignition'][1:-2].to_numpy() ) + 273.15
     Flash_point_mixture = sum(z_frac*df_data['Flash'][1:-2].to_numpy() ) + 273.15
 
-    Mass = bst.F.MainReactor.outs[0].F_mass/3600  #  [kg/hr] to   [Kg/sec] de vapores
+    Mass =  bst.F.MainReactor.outs[0].F_mass/3600  #  [kg/hr] to   [Kg/sec] de vapores
     Pequipment = bst.F.MainReactor.Preac/1000  #  [Pa] to [kPa]
     Vol =   (4*4*4)*22  # [m3]
     VapPress  =    bst.F.MainReactor.Preac/1000  #  752180.689431543   # [kPa] Average Value taken from Aspen
-    Factor1 = 0.1*(Mass*(Enthalpy_comb))/3.148
+    Factor1 = 0.01*(Mass*(Enthalpy_comb))/3.148
     Factor2 = (6/3.148)*Pequipment*Vol
     Tope = bst.F.MainReactor.Treac
     Factor3 = (1e-3)*(1/Tope)*((Pequipment-VapPress)**2)*Vol   # La temperatura es de la operación
@@ -1180,15 +1674,7 @@ def create_system(processing_capacity,x,y, settings, type = None):
     Damage_Potential = (Factor1*pn1 + FactorGen*pn2 + Factor4*pn7)*(pn3*pn4*pn5*pn6)
     # print('Damage_Potential', Damage_Potential)
     Fedi_val = 4.76*(Damage_Potential**(1/3))
-    return context_sys, tea, NPV , IRR_val, Fedi_val, GWP_revenue
-
-
-
-
-
-
-
-
+    return context_sys, tea, NPV , IRR_val, Fedi_val, GWP_results
 
 
 
