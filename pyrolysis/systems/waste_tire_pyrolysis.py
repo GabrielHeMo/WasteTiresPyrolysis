@@ -9,19 +9,19 @@ __all__ = (
 )
 
 @bst.SystemFactory(
-    ins=[dict(ID='feedstock', Tire=6250, units='kg/hr'),
-         dict(ID='hydrogen', phase='g')],
+    ins=[dict(ID='feedstock', Tire=6250, units='kg/hr')],
     outs=[dict(ID='diesel', price=1.06),
           dict(ID='LFO', price=1.06),
           dict(ID='metals', price=0.237),
           dict(ID='activated_carbon', price=1.5)]
 )
 def create_pyrolysis_system(ins, outs):
-    feed, hydrogen, = ins
+    feed, = ins
     diesel, LFO, metals, activated_carbon = outs
     syngas_recycle = bst.Stream()
     R1 = pyrolysis.PyrolysisReactor(ins=[feed, syngas_recycle], tau=14)
     vapor, solids, unused_syngas, emissions = R1.outs
+    emissions.ID = 'emissions'
     condensation_sys = pyrolysis.create_pyrolysis_product_condensation_system(
         ins=vapor, outs=[syngas_recycle, 'naphtha', 'fuel_oil']
     )
@@ -40,7 +40,8 @@ def create_pyrolysis_system(ins, outs):
     HX1 = bst.HXutility(ins=HG-0, T=40 + 273.15)
     C1 = bst.IsentropicCompressor(ins=HX1-0, P=P_hydrotreater)
     HX2 = bst.HXutility(ins=C1-0, T=40 + 273.15)
-    H2_mixer = bst.Mixer(ins=[HX2-0, hydrogen]) 
+    fresh_hydrogen = bst.Stream()
+    H2_mixer = bst.Mixer(ins=[HX2-0, fresh_hydrogen]) 
     P3 = bst.Pump(ins=fuel_oil, P=P_hydrotreater)
     HT = pyrolysis.Hydrotreater(ins=[P3-0, H2_mixer-0])
     
@@ -58,10 +59,10 @@ def create_pyrolysis_system(ins, outs):
         
         # Adjust fresh hydrogen or naphtha split accordingly
         if hydrogen_consumed > hydrogen_produced:
-            hydrogen.imol['H2'] = hydrogen_consumed - hydrogen_produced
+            fresh_hydrogen.imol['H2'] = hydrogen_consumed - hydrogen_produced
             for i in HG_to_HT: i.run()
         else:
-            hydrogen.imol['H2'] = 0
+            fresh_hydrogen.imol['H2'] = 0
             naphtha_splitter.split[:] = hydrogen_consumed / hydrogen_produced
             for i in naphtha_to_HT: i.run()
     
@@ -72,18 +73,33 @@ def create_pyrolysis_system(ins, outs):
     )    
     MA = pyrolysis.MechanicalActivation(ins=solids, outs=['pretreated_char', metals])
     char, ash = MA.outs
-    RK = pyrolysis.RotaryKiln(ins=char, outs=activated_carbon)
-    combustible_mixer = bst.Mixer(ins=[naphtha_splitter-1, HG-1, unused_syngas, off_gas], outs='gas_to_boiler')
+    water = bst.Stream(
+        price=0.00021133774, # 0.8 USD / 1000 gal
+    )
+    char_syngas = bst.Stream()
+    RK = pyrolysis.RotaryKiln(ins=[char, water, 'air'], outs=[activated_carbon, char_syngas, 'emissions'])
+    combustible_mixer = bst.Mixer(ins=[naphtha_splitter-1, HG-1, unused_syngas, char_syngas, off_gas], outs='gas_to_boiler')
     bst.BoilerTurbogenerator(ins=[combustible_mixer-0])
     bst.CoolingTower()
 
-
 def test_pyrolysis_system():
+    import numpy as np
     import pyrolysis
     import biosteam as bst
-    from biorefineries.tea import create_cellulosic_ethanol_tea
     bst.settings.set_thermo(pyrolysis.create_chemicals(), pkg='ideal gas')
     sys = pyrolysis.create_pyrolysis_system()
     sys.simulate()
-    tea = create_cellulosic_ethanol_tea(sys)
-    breakpoint()
+    tea = pyrolysis.create_pyrolysis_tea(sys)
+    feed, = sys.ins
+    diesel, LFO, metals, activated_carbon = sys.outs
+    np.testing.assert_allclose(
+        [feed.F_mass, diesel.F_mass, LFO.F_mass, metals.F_mass, activated_carbon.F_mass],
+        [6250.0, 1315.95218259095, 127.55855512231291, 843.7500000000001, 381.6095151143242],
+    )
+    np.testing.assert_allclose(
+        tea.solve_IRR,
+        0.20648274885670082
+    )
+    
+if __name__ == '__main__':
+    test_pyrolysis_system()

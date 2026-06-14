@@ -230,8 +230,8 @@ def _create_model(context_sys, settings, tea):
 
     # Este es necesario para los calculos 
     @model.parameter(element='P_moisture', units='wt%',  
-                    bounds=(0.4, 12.13),
-                    baseline=4.0,
+                    bounds=(0.4, 2),
+                    baseline=1.0,
                     distribution='triangular',
                     coupled=True)
     def set_P_moisture(value_P_moisture):
