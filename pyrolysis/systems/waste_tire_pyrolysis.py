@@ -5,7 +5,7 @@ import biosteam as bst
 import pyrolysis
 
 __all__ = (
-    'create_pyrolysis_system',
+    'create_waste_tire_pyrolysis_system',
 )
 
 @bst.SystemFactory(
@@ -15,11 +15,12 @@ __all__ = (
           dict(ID='metals', price=0.237),
           dict(ID='activated_carbon', price=1.5)]
 )
-def create_pyrolysis_system(ins, outs):
+def create_waste_tire_pyrolysis_system(ins, outs):
     feed, = ins
     diesel, LFO, metals, activated_carbon = outs
     syngas_recycle = bst.Stream()
     R1 = pyrolysis.PyrolysisReactor(ins=[feed, syngas_recycle], tau=14)
+    R1.register_alias('pyrolysis_reactor')
     vapor, solids, unused_syngas, emissions = R1.outs
     emissions.ID = 'emissions'
     condensation_sys = pyrolysis.create_pyrolysis_product_condensation_system(
@@ -82,14 +83,14 @@ def create_pyrolysis_system(ins, outs):
     bst.BoilerTurbogenerator(ins=[combustible_mixer-0])
     bst.CoolingTower()
 
-def test_pyrolysis_system():
+def test_waste_tire_pyrolysis_system():
     import numpy as np
     import pyrolysis
     import biosteam as bst
     bst.settings.set_thermo(pyrolysis.create_chemicals(), pkg='ideal gas')
-    sys = pyrolysis.create_pyrolysis_system()
+    sys = pyrolysis.create_waste_tire_pyrolysis_system()
     sys.simulate()
-    tea = pyrolysis.create_pyrolysis_tea(sys)
+    tea = pyrolysis.create_tea(sys)
     feed, = sys.ins
     diesel, LFO, metals, activated_carbon = sys.outs
     np.testing.assert_allclose(
@@ -97,9 +98,9 @@ def test_pyrolysis_system():
         [6250.0, 1315.95218259095, 127.55855512231291, 843.7500000000001, 381.6095151143242],
     )
     np.testing.assert_allclose(
-        tea.solve_IRR,
-        0.20648274885670082
+        tea.solve_IRR(),
+        0.051151, # Without tipping fee (for now).
     )
     
 if __name__ == '__main__':
-    test_pyrolysis_system()
+    test_waste_tire_pyrolysis_system()

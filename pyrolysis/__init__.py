@@ -15,7 +15,7 @@ __all__ = (
     *tea.__all__,
 )
 
-from ._chemicals import create_chemicals
+from ._chemicals import *
 from .units import *
 from .systems import *
 from .tea import *

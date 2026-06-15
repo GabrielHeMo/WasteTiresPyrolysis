@@ -1,8 +1,8 @@
 from biorefineries.tea import create_cellulosic_ethanol_tea
 
-__all__ = ('create_pyrolysis_tea',)
+__all__ = ('create_tea',)
 
-def create_pyrolysis_tea(sys):
+def create_tea(sys):
     tea = create_cellulosic_ethanol_tea(sys)
     tea.duration = (2026, 2046)
     tea.income_tax = 0.21

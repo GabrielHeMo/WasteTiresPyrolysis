@@ -55,11 +55,11 @@ class PyrolysisReactor(bst.Unit):
     
     # DO NOT DELETE: This code computes the cost of correlation from real data
     # tau = 14
-    # tire_flows_data = [i * 907.185 * 24 for i in (30, 60, 100, 150)]
+    # tire_flows_data = [i * 907.185 / 24 for i in (30, 60, 100, 150)]
     # N_cages_data = [np.ceil(i * tau / cage_capacity) for i in tire_flows_data]
     # cost_data = [6240000, 11870000, 17230000, 24544000]
     # cost_per_cage, facilities_cost = np.polyfit(N_cages_data, cost_data, 1)
-    cost_per_cage = 1.967e+03
+    cost_per_cage = 1.111e6
     facilities_cost = 2.231e+06
 
     def _init(self, T=500 + 273.15, P=101325, tau=14):
@@ -210,7 +210,7 @@ class PyrolysisReactor(bst.Unit):
         vapor.P = solids.P = self.P
     
         # Duty that needs to be satisfied
-        duty = (vapor.Hnet + solids.Hnet) - feed.Hnet
+        self.total_duty = duty = (vapor.Hnet + solids.Hnet) - feed.Hnet
         
         if not syngas.isempty():
             # Get available heat after combustion at the furnace

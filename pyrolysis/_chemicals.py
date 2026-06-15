@@ -6,7 +6,18 @@ from chemicals.elements import periodic_table
 
 __all__ = (
     'create_chemicals',
+    'get_component_data',
+    'adjust_tire_composition'
 )
+
+data = None
+def get_component_data():
+    global data
+    if data is not None: return data
+    data_folder = os.path.join(os.path.dirname(__file__), 'data')
+    path = os.path.join(data_folder, 'Data_components_clean.csv')
+    data = pd.read_csv(path, encoding='latin1')
+    return data
 
 def User_mu_model_isodurene(T , C1 = -12.343  , C2 = 1688.4, C3 = -0.0041458 , C4 = 0, C5 = 0):  # C10H14E6
    if T > 249.46 or T < 471.15:
@@ -58,10 +69,7 @@ nonequilibrium_components = frozenset([
 ])
 
 def create_chemicals():
-    data_folder = os.path.join(os.path.dirname(__file__), 'data')
-    path = os.path.join(data_folder, 'Data_components_clean.csv')
-    df = pd.read_csv(path, encoding='latin1')
-    
+    data = get_component_data()
     chemicals = bst.Chemicals([
         bst.Chemical('Rubber', db='BioSTEAM'),
         bst.Chemical('Ash', db='BioSTEAM'),
@@ -71,9 +79,9 @@ def create_chemicals():
         bst.Chemical('SO2'),
         bst.Chemical('dodecane'),
     ])
-    IDs = df['Component ID']
-    names = df['common_names']
-    CAS = df['CAS NUM']
+    IDs = data['Component ID']
+    names = data['common_names']
+    CAS = data['CAS NUM']
     gases = {
         # 'molecular hydrogen', 
         # 'hydrogen sulfide',
@@ -85,9 +93,7 @@ def create_chemicals():
         # 'ethane',
         # 'propane'
     }
-    for i, available in enumerate(df['Available DataBase']): # Search compounds in database
-        if not available: continue 
-        ID = IDs.iloc[i]
+    for i, ID in enumerate(IDs): # Search compounds in database
         if ID == 'carbon': phase = 's'
         elif ID in gases: phase = 'g'
         else: phase = None
@@ -98,6 +104,7 @@ def create_chemicals():
         chemicals.append(component)
     chemicals.compile()
     chemicals.set_alias('ammonia', 'NH3')
+    chemicals.set_alias('carbon dioxide', 'CO2')
     chemicals['527-53-7'].mu.l.add_method(f=User_mu_model_isodurene, Tmin = 0, Tmax=1000)  # '1,2,3,5-tetramethylbenzene0'  
     chemicals['527-53-7'].mu.l.method = 'USER_METHOD'
     chemicals['527-53-7'].mu.l.method_P = None
@@ -130,7 +137,7 @@ def adjust_tire_composition(
     )
     formula = dict(
         H=H, O=O, N=N, C=C, S=S
-    ) # Elemental composition is on a dry basis
+    ) # Elemental composition is on a dry basis by weight
     MW = sum(formula.values())
     for i, j in formula.items(): 
         formula[i] = j / MW / periodic_table[i].MW # Normalize to 1 kg and set to molar basis
