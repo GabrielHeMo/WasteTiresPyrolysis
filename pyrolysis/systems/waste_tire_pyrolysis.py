@@ -73,12 +73,14 @@ def create_waste_tire_pyrolysis_system(ins, outs):
         ins=T1-0, outs=(off_gas, residual_naphtha, diesel, LFO), mockup=True
     )    
     MA = pyrolysis.MechanicalActivation(ins=solids, outs=['pretreated_char', metals])
+    MA.register_alias('mechanical_activation')
     char, ash = MA.outs
     water = bst.Stream(
         price=0.00021133774, # 0.8 USD / 1000 gal
     )
     char_syngas = bst.Stream()
     RK = pyrolysis.RotaryKiln(ins=[char, water, 'air'], outs=[activated_carbon, char_syngas, 'emissions'])
+    RK.register_alias('rotary_kiln')
     combustible_mixer = bst.Mixer(ins=[naphtha_splitter-1, HG-1, unused_syngas, char_syngas, off_gas], outs='gas_to_boiler')
     bst.BoilerTurbogenerator(ins=[combustible_mixer-0])
     bst.CoolingTower()

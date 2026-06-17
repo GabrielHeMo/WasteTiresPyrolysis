@@ -21,12 +21,12 @@ __all__ = (
 # Thermal energy consumption (about 12.6e3 kJ per kg tire, assuming 0.37 char yield) for producing activated carbon (through gasification) based on: 
 # https://www.sciencedirect.com/science/article/pii/S0921344917303579
 
-# Electric energy consumption (abound 72 kW per 2.5 ton of feed) based on specs from commercial rotary kiln:
+# Electric energy consumption (about 72 kW per 2.5 ton of feed) based on specs from commercial rotary kiln:
 # https://rotarykilnsupplier.com/activated-carbon-production/
 
 # Burn off of activated carbon:
 # 0.784 burn off required for a BET of 775.8 m2 / g
-# This is low to medium BET (between 1.5 to 1.8 USD / kg)
+# This is low to medium BET
 # https://www.sciencedirect.com/science/article/pii/S0921344917303579
 # https://www.sciencedirect.com/science/article/pii/S0048969723056061#s0165
 

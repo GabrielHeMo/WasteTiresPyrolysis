@@ -47,13 +47,15 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         self.metals.set_CF('GWP', 1.9872)
         self.tea = tea = pyrolysis.create_tea(self.system)
         model = bst.Model(self.system)
+        parameter = model.parameter
+        indicator = model.indicator
         
         data = pyrolysis.get_component_data()
         IDs = data['Component ID'].values
         Ignition = data['Ignition'].values
         Flash = data['Flash'].values
         
-        @model.indicator(units='damage*meter')
+        @indicator(units='damage*meter')
         def FEDI():
             pyrolysis_reactor = self.pyrolysis_reactor
             product = pyrolysis_reactor.outs[0]
@@ -88,16 +90,16 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
             Fedi_val = 4.76 * Damage_Potential**(1/3)
             return Fedi_val
     
-        @model.indicator(units='10^6 * USD')
+        @indicator(units='10^6 * USD')
         def TCI(): return tea.TCI / 1e6 
     
-        @model.indicator(units='%')
+        @indicator(units='%')
         def IRR(): return 100 * tea.solve_IRR() 
         
-        @model.indicator(units='kg*CO2e/kg')
+        @indicator(units='kg*CO2e/kg')
         def GWP(): return self.system.get_product_impact(self.feedstock, 'GWP', allocation_method='displacement')
         
-        @model.parameter(
+        @parameter(
             element='tire', units='dry kg/hr', 
             bounds=(2500, 6250), distribution='uniform'
         )
@@ -108,49 +110,49 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
             set_processing_capacity.active = False
             self.processing_capacity = self.scenario.processing_capacity
         
-        @model.parameter(
+        @parameter(
             element='tire', units='wt%', 
             bounds=(0.4, 2), baseline=1.0, distribution='triangular'
         )
         def set_moisture_content(moisture_content):
             self.tire_moisture_content = moisture_content
             
-        @model.parameter(
+        @parameter(
             element='tire', units='wt%',  
             bounds=(0, 9.89), baseline=2.5, distribution='triangular'
         )
         def set_ash_content(ash_content):
             self.tire_ash_content = ash_content
             
-        @model.parameter(
+        @parameter(
             element='tire', units='wt%',  
             bounds=(75, 89.9), baseline=83.3, distribution='triangular',
         )
         def set_rubber_carbon_content(rubber_carbon_content):
             self.rubber_carbon_content = rubber_carbon_content
     
-        @model.parameter(
+        @parameter(
             element='tire', units='wt%',
             bounds=(6.56, 7.99), baseline=7.5, distribution='triangular',
         )
         def set_rubber_hydrogen_content(rubber_hydrogen_content):
             self.rubber_hydrogen_content = rubber_hydrogen_content
     
-        @model.parameter(
+        @parameter(
             element='tire', units='wt%', 
             bounds=(1.29, 10.79), baseline=4.5, distribution='triangular', 
         )
         def set_rubber_oxygen_content(rubber_oxygen_content):
             self.rubber_oxygen_content = rubber_oxygen_content
     
-        @model.parameter(
+        @parameter(
             element='tire', units='wt%', 
             bounds=(0.3, 1.0), baseline=0.6, distribution='triangular', 
         )
         def set_rubber_nitrogen_content(rubber_nitrogen_content):
             self.rubber_nitrogen_content = rubber_nitrogen_content
     
-        @model.parameter(
+        @parameter(
             element='tire', units='wt%', 
             bounds=(0.87, 2.46), baseline=1.6, distribution='triangular',
         )
@@ -158,9 +160,9 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
             self.rubber_sulfer_content = rubber_sulfer_content
             self.update_feedstock()
             
-        @model.parameter(
+        @parameter(
             element='Pyrolysis reactor', units='K', 
-            bounds=(500 + 273.15, 800 + 273.15), baseline=550 + 273.15, distribution='triangular'
+            bounds=(500 + 273.15, 800 + 273.15), baseline=550 + 273.15, distribution='uniform'
         )
         def set_pyrolysis_reactor_temperature(temperature):
             self.pyrolysis_reactor.T = temperature
@@ -168,31 +170,31 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         kg_per_ton = 907.185
     
         # https://archive.epa.gov/epawaste/conserve/materials/tires/web/pdf/tires.pdf
-        @model.parameter(
+        @parameter(
             element='Tire', units='USD/kg',
             bounds=(35 / kg_per_ton, 108 / kg_per_ton),
             baseline=50 / kg_per_ton,
-            distribution='triangular'
+            distribution='uniform'
         )
         def set_tire_tipping_fee(tire_tipping_fee):
             self.feedstock.price = -tire_tipping_fee
         
         # Whole sale price
         # https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?n=pet&s=ema_epd2d_pwg_nus_dpg&f=m
-        @model.parameter(
+        @parameter(
             element='Diesel', units='USD/gal',
             bounds=(0.878, 3.582),
             baseline=3.582,
-            distribution='triangular' 
+            distribution='uniform' 
         )
         def set_diesel_price(diesel_price):
             self.diesel.price = diesel_price / 3.22 # gal to kg
     
-        @model.parameter(
+        @parameter(
             element='LFO', units='USD/gal',
             bounds=(0.878, 3.582),
             baseline=3.582,
-            distribution='triangular',
+            distribution='uniform',
         )
         def set_LFO_price(LFO_price):
             self.LFO.price = LFO_price / 3.22 # gal to kg
@@ -206,11 +208,11 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         # 960.00 USD / ton
         # https://yrdcarbon.en.made-in-china.com/product/exEYRISrJvck/China-Coal-Based-Powdered-Activated-Carbon-Price-Per-Ton-for-Power-Plant.html
         
-        @model.parameter(
+        @parameter(
             element='Activated carbon', units='USD/kg',
             bounds = (750 / kg_per_ton, 1050 / kg_per_ton),
             baseline = 960 / kg_per_ton,
-            distribution='triangular'
+            distribution='uniform'
         )
         def set_carbon_price(price):
             self.activated_carbon.price = price            
@@ -219,7 +221,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         # https://jrsadvancedrecyclers.com/scrap-metal-prices/#steel
         metal_price = 215 / kg_per_ton
         
-        @model.parameter(
+        @parameter(
             element='Metals', units='USD/kg',
             bounds=(metal_price * 0.80, metal_price * 1.2),
             baseline=metal_price,
@@ -227,6 +229,25 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         )
         def set_metals_price(price):
             self.metals.price = price
+        
+        @parameter(
+            element='Activated carbon', units='wt %',
+            bounds=(48.1, 78.4),
+            baseline=metal_price,
+            distribution='uniform'
+        )
+        def set_burn_off(burn_off):
+            self.rotary_kiln.burn_off = burn_off / 100
+        
+        @parameter(
+            element='Mechanical activation', units='kWh/kg',
+            bounds=(1, 2),
+            baseline=1.5,
+            distribution='uniform'
+        )
+        def set_mechanical_activation_power(power):
+            MA = self.mechanical_activation
+            MA.cost_items[MA.line].kW = power
         
         # WE DO NOT USE THIS REFERENCE because it includes end of life emissions (so we avoid double counting)
         # Cradle to gate: Comparative life cycle assessment of biomass-based and coal-based activated carbon production
@@ -249,6 +270,7 @@ def test_process_model():
     np.testing.assert_allclose(process.TCI(), 125.81377257887546)
     np.testing.assert_allclose(process.IRR(), 4.994807574387354) 
     np.testing.assert_allclose(process.GWP(), -0.41594632112501634)
+    
     
 if __name__ == '__main__':
     test_process_model()
