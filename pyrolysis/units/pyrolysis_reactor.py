@@ -36,10 +36,9 @@ def k4_waste_tire_pyrolysis(T):
 def pyrolysis_conversion(
         x, coefficients, char_coefficient, stoichiometry, char_stoichiometry, 
         reactant_index, carbon_index, solids_index):
-    total = x.sum()
-    X = x[reactant_index] / total
+    X = x[reactant_index]
     rates = coefficients * X 
-    return stoichiometry @ rates + char_stoichiometry * char_coefficient * x[carbon_index] / total
+    return stoichiometry @ rates + char_stoichiometry * char_coefficient * x[carbon_index]
     
 class PyrolysisReactor(bst.Unit):
     """
@@ -67,6 +66,13 @@ class PyrolysisReactor(bst.Unit):
         self.P = P #: Operating pressure [Pa]
         self.tau = tau #: Residence time [hr]
         self._load_kinetic_data()
+
+    def _setup(self):
+        super()._setup()
+        self.decomposition = bst.Reaction(
+            'Rubber -> O2 + N2 + Sulfur + H2 + Carbon', X=1, reactant='Rubber',
+            correct_atomic_balance=True,
+        )
 
     @property
     def cage_volume(self):
@@ -105,6 +111,8 @@ class PyrolysisReactor(bst.Unit):
                 if chemical.atoms['H'] / chemical.atoms['C'] < 2:
                     element = 'C'
                     index = C_index
+                else:
+                    index = H2_index
             if ('O' in chemical.atoms or 'S' in chemical.atoms):
                 k *= 10 # Rescale to match product distribution
             elif chemical.Tb < 300: 
@@ -135,10 +143,6 @@ class PyrolysisReactor(bst.Unit):
         self.solids_index = np.array(self.chemicals.get_index([
             'Rubber', 'Ca(OH)2', 'CaSO4', 'Char',
         ]))
-        self.decomposition = bst.Reaction(
-            'Rubber -> O2 + N2 + Sulfur + H2 + Carbon', X=1, reactant='Rubber',
-            correct_atomic_balance=True,
-        )
         self.char_formation = bst.Reaction(
             'C -> Char', X=1, reactant='C', correct_atomic_balance=True,
         )

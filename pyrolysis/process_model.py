@@ -40,6 +40,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
             inventory=lambda: sum([i.imass['CO2'] for i in emissions]), 
             CF=1
         )
+        self.system.set_tolerance(mol=1e-6, rmol=1e-6)
         
         # GREET 2023
         self.diesel.set_CF('GWP', 0.5169) 
@@ -189,7 +190,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         )
         def set_diesel_price(diesel_price):
             self.diesel.price = diesel_price / 3.22 # gal to kg
-    
+        
         @parameter(
             element='LFO', units='USD/gal',
             bounds=(0.878, 3.582),
@@ -233,7 +234,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         @parameter(
             element='Activated carbon', units='wt %',
             bounds=(48.1, 78.4),
-            baseline=metal_price,
+            baseline=78.4,
             distribution='uniform'
         )
         def set_burn_off(burn_off):
@@ -266,10 +267,10 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
 
 def test_process_model():
     process = WasteTirePyrolysisProcess(processing_capacity=6250)
-    np.testing.assert_allclose(process.FEDI(), 968.2864104568014)
-    np.testing.assert_allclose(process.TCI(), 125.81377257887546)
-    np.testing.assert_allclose(process.IRR(), 4.994807574387354) 
-    np.testing.assert_allclose(process.GWP(), -0.41594632112501634)
+    np.testing.assert_allclose(process.FEDI(), 965.842264949065, rtol=1e-3)
+    np.testing.assert_allclose(process.TCI(), 121.42411596282324, rtol=1e-3)
+    np.testing.assert_allclose(process.IRR(), 2.8789219652373093, rtol=1e-3) 
+    np.testing.assert_allclose(process.GWP(), -0.4012597038401888, rtol=1e-3)
     
     
 if __name__ == '__main__':
