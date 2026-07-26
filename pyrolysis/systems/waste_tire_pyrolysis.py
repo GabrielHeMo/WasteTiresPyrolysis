@@ -9,14 +9,15 @@ __all__ = (
 )
 
 @bst.SystemFactory(
-    ins=[dict(ID='feedstock', Tire=6250, units='kg/hr')],
+    ins=[dict(ID='feedstock', Tire=6250, units='kg/hr'),
+         dict(ID='fresh_hydrogen', units='kg/hr', price=4.5)],
     outs=[dict(ID='diesel', price=1.06),
           dict(ID='LFO', price=1.06),
           dict(ID='metals', price=0.237),
           dict(ID='activated_carbon', price=1.5)]
 )
 def create_waste_tire_pyrolysis_system(ins, outs):
-    feed, = ins
+    feed, fresh_hydrogen = ins
     diesel, LFO, metals, activated_carbon = outs
     syngas_recycle = bst.Stream()
     R1 = pyrolysis.PyrolysisReactor(ins=[feed, syngas_recycle], tau=14)
@@ -41,31 +42,40 @@ def create_waste_tire_pyrolysis_system(ins, outs):
     HX1 = bst.HXutility(ins=HG-0, T=40 + 273.15)
     C1 = bst.IsentropicCompressor(ins=HX1-0, P=P_hydrotreater)
     HX2 = bst.HXutility(ins=C1-0, T=40 + 273.15)
-    fresh_hydrogen = bst.Stream()
     H2_mixer = bst.Mixer(ins=[HX2-0, fresh_hydrogen]) 
     P3 = bst.Pump(ins=fuel_oil, P=P_hydrotreater)
     HT = pyrolysis.Hydrotreater(ins=[P3-0, H2_mixer-0])
+    ignored = [
+        P1, P2, naphtha_mixer, naphtha_splitter, HG,
+        HG, HX1, C1, HX2, H2_mixer
+    ]
+    for unit in ignored:
+        @unit.add_specification
+        def do_nothing(): pass
     
     @HT.add_specification
     def adjust_naphtha_recycling():
+        fresh_hydrogen.imol['H2'] = 0
+        
         # Find maximum hydrogen production
         naphtha_splitter.split[:] = 1
-        naphtha_to_HG = [P1, P2, naphtha_mixer, naphtha_splitter, HG]
-        HG_to_HT = [HX1, C1, HX2, H2_mixer, HT] 
-        naphtha_to_HT = naphtha_to_HG + HG_to_HT
-        for i in naphtha_to_HG: i.run()
+        naphtha_to_before_mixer = [
+            P1, P2, naphtha_mixer, naphtha_splitter, HG,
+            HG, HX1, C1, HX2
+        ]
+        for i in naphtha_to_before_mixer: i._run()
         HT_feed = HT.ins[0]
         hydrogen_produced = HG.outs[0].imol['H2']
-        hydrogen_consumed = HT.hydrogen_requirement(HT_feed)
+        hydrogen_consumed = HT.hydrogen_requirement(HT_feed) + 1e-6
         
         # Adjust fresh hydrogen or naphtha split accordingly
-        if hydrogen_consumed > hydrogen_produced:
-            fresh_hydrogen.imol['H2'] = hydrogen_consumed - hydrogen_produced
-            for i in HG_to_HT: i.run()
+        H2_fresh = hydrogen_consumed - hydrogen_produced
+        if H2_fresh > 0:
+            fresh_hydrogen.imol['H2'] = H2_fresh
+            for i in [H2_mixer, HT]: i._run()
         else:
-            fresh_hydrogen.imol['H2'] = 0
             naphtha_splitter.split[:] = hydrogen_consumed / hydrogen_produced
-            for i in naphtha_to_HT: i.run()
+            for i in [naphtha_splitter, HG, HX1, C1, HX2, H2_mixer, HT]: i._run()
     
     T1 = bst.IsentropicTurbine(ins=HT-0, P=101325)
     off_gas = bst.Stream()

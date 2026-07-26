@@ -69,7 +69,7 @@ class HydrogenGeneration(bst.Unit):
                 if i.phase: continue # Phase is locked
                 reactive.append(i.ID)
         self.reactive = reactive
-        self.products = ('H2O', 'H2', 'CO', 'CO2', 'CH4')
+        self.products = ('H2O', 'H2', 'CO', 'CO2')
         self.kWh_per_kgH2 = 0.5 # https://www.sciencedirect.com/science/article/pii/S0360319923020189
         self.H2_recovery_efficiency = 0.9 # https://www.sciencedirect.com/science/article/pii/S0360319923020189
         self.method = self.method_default if method is None else method

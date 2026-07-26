@@ -24,7 +24,12 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
             H=H, O=O, N=N, C=C, S=S, # Elemental composition
             rubber=100 - ash - moisture, ash=ash, moisture=moisture, # Overall composition
         )
-        self.feedstock.imol['Tire'] = 100 * self.processing_capacity / (100 - moisture)
+        original = self.feedstock.imol['Tire']
+        new = 100 * self.processing_capacity / (100 - moisture)
+        if original:
+            self.system.rescale(self.feedstock, new / original)
+        else:
+            self.feedstock.imol['Tire'] = new
     
     def create_thermo(self):
         return bst.Thermo(pyrolysis.create_chemicals(), pkg='ideal gas')
@@ -40,7 +45,10 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
             inventory=lambda: sum([i.imass['CO2'] for i in emissions]), 
             CF=1
         )
-        self.system.set_tolerance(mol=1e-6, rmol=1e-6)
+        self.system.set_tolerance(
+            mol=1e-3, rmol=1e-3, maxiter=200, subsystems=True,
+            method='fixed-point'
+        )
         
         # GREET 2023
         self.diesel.set_CF('GWP', 0.5169) 
@@ -85,7 +93,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
             F = F3          
             F4  = (Mass * pyrolysis_reactor.total_duty) / 3.148
     
-            pn4 = 1 + 0.25*(3 + 0)
+            pn4 = 1 + 0.25*3
             pn3, pn5, pn6, pn7 = 1, 1, 1, 1.45
             Damage_Potential = (F1*pn1 + F*pn2 + F4*pn7) * pn3 * pn4 * pn5 * pn6
             Fedi_val = 4.76 * Damage_Potential**(1/3)
@@ -102,7 +110,8 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         
         @parameter(
             element='tire', units='dry kg/hr', 
-            bounds=(2500, 6250), distribution='uniform'
+            bounds=(2500, 6250), distribution='uniform',
+            coupled=True,
         )
         def set_processing_capacity(processing_capacity):
             self.processing_capacity = processing_capacity
@@ -113,14 +122,16 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         
         @parameter(
             element='tire', units='wt%', 
-            bounds=(0.4, 2), baseline=1.0, distribution='triangular'
+            bounds=(0.4, 2), baseline=1.0, distribution='triangular',
+            coupled=True,
         )
         def set_moisture_content(moisture_content):
             self.tire_moisture_content = moisture_content
             
         @parameter(
             element='tire', units='wt%',  
-            bounds=(0, 9.89), baseline=2.5, distribution='triangular'
+            bounds=(0, 9.89), baseline=2.5, distribution='triangular',
+            coupled=True,
         )
         def set_ash_content(ash_content):
             self.tire_ash_content = ash_content
@@ -128,6 +139,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         @parameter(
             element='tire', units='wt%',  
             bounds=(75, 89.9), baseline=83.3, distribution='triangular',
+            coupled=True,
         )
         def set_rubber_carbon_content(rubber_carbon_content):
             self.rubber_carbon_content = rubber_carbon_content
@@ -135,6 +147,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         @parameter(
             element='tire', units='wt%',
             bounds=(6.56, 7.99), baseline=7.5, distribution='triangular',
+            coupled=True,
         )
         def set_rubber_hydrogen_content(rubber_hydrogen_content):
             self.rubber_hydrogen_content = rubber_hydrogen_content
@@ -142,6 +155,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         @parameter(
             element='tire', units='wt%', 
             bounds=(1.29, 10.79), baseline=4.5, distribution='triangular', 
+            coupled=True,
         )
         def set_rubber_oxygen_content(rubber_oxygen_content):
             self.rubber_oxygen_content = rubber_oxygen_content
@@ -149,6 +163,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         @parameter(
             element='tire', units='wt%', 
             bounds=(0.3, 1.0), baseline=0.6, distribution='triangular', 
+            coupled=True,
         )
         def set_rubber_nitrogen_content(rubber_nitrogen_content):
             self.rubber_nitrogen_content = rubber_nitrogen_content
@@ -156,6 +171,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
         @parameter(
             element='tire', units='wt%', 
             bounds=(0.87, 2.46), baseline=1.6, distribution='triangular',
+            coupled=True,
         )
         def set_rubber_sulfer_content(rubber_sulfer_content):
             self.rubber_sulfer_content = rubber_sulfer_content
@@ -163,7 +179,8 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
             
         @parameter(
             element='Pyrolysis reactor', units='K', 
-            bounds=(500 + 273.15, 800 + 273.15), baseline=550 + 273.15, distribution='uniform'
+            bounds=(500 + 273.15, 800 + 273.15), baseline=550 + 273.15, distribution='uniform',
+            coupled=True,
         )
         def set_pyrolysis_reactor_temperature(temperature):
             self.pyrolysis_reactor.T = temperature
@@ -235,7 +252,8 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
             element='Activated carbon', units='wt %',
             bounds=(48.1, 78.4),
             baseline=78.4,
-            distribution='uniform'
+            distribution='uniform',
+            coupled=True,
         )
         def set_burn_off(burn_off):
             self.rotary_kiln.burn_off = burn_off / 100

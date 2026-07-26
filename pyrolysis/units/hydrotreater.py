@@ -99,7 +99,6 @@ class Hydrotreater(bst.Unit):
     ins : 
         * [0] Raw pyrolysis oil.
         * [1] Hydrogen produced on-site.
-        * [2] Fresh hydrogen.
     outs :  
         Vapor product.
     T : float   

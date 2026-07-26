@@ -11,12 +11,15 @@ results_folder = os.path.join(os.path.dirname(__file__), 'results')
 
 def run_montecarlo(): 
     filterwarnings('ignore')
-    pm = pyrolysis.WasteTirePyrolysisProcess(processing_capacity=6250)
+    pm = pyrolysis.WasteTirePyrolysisProcess(processing_capacity=None)
     pm.model.exception_hook = 'raise'
     N_samples = 2000
     np.random.seed(1)
     samples = pm.model.sample(N_samples, 'L')
     pm.model.load_samples(samples)
+    
+    
+    
     for n, processing_capacity in enumerate(pyrolysis.key_processing_capacities):
         autoload_file = os.path.join(results_folder, f'monte_carlo_backup_{n}')
         spearman_file = os.path.join(results_folder, f'spearman_{n}.xlsx')
@@ -24,61 +27,13 @@ def run_montecarlo():
         pm.processing_capacity = processing_capacity
         pm.model.evaluate(
             notify=100,
-            autosave=500,
+            autosave=100,
             autoload=True,
             file=autoload_file,
         )
         pm.model.table.to_excel(monte_carlo_file)
         rho, p = pm.model.spearman_r(filter='omit nan')
         rho.to_excel(spearman_file)
-
-def plot_scatter_1d(name, metrics, 
-                xticks=None, yticks=None, zticks=None,
-                fs=None, ticklabels=True,  
-                xlabel=None, ylabel=None, 
-                aspect_ratio=0.4, width=None,
-                xscale=1, x_center=None, y_center=None,
-                yscale=1, zscale=1,
-                **kwargs):
-    set_font(size=fs or 12)
-    set_figure_size(width=width, aspect_ratio=aspect_ratio)
-    if isinstance(name, str): name = (name,)
-    Xi, Yi, Zi = [i.index for i in metrics]
-    dfs = [get_monte_carlo(i, metrics) for i in name]
-    xs = np.array([df[Xi].values for df in dfs]) * xscale
-    ys = np.array([df[Yi].values for df in dfs]) * yscale
-    zs = np.array([df[Zi].values for df in dfs]) * zscale
-    fig, axes = bst.plots.plot_scatter_1d(
-        xs=xs, ys=ys, zs=zs,
-        xticks=xticks, yticks=yticks, zticks=zticks,
-        xticklabels=ticklabels, yticklabels=ticklabels,
-        xlabel=xlabel,
-        ylabel=ylabel,
-        autobox=False,
-        **kwargs,
-    )
-    M, N = axes.shape
-    Mrange = range(M)
-    Nrange = range(N)
-    for i in Mrange:
-        for j in Nrange:
-            ax = axes[i, j]
-            plt.sca(ax)
-            if i == M - 1: plt.xlabel(xlabel)
-            if j == 0: plt.ylabel(ylabel)
-            df = dfs[j]
-            x = df[Xi]
-            y = df[Yi]
-            bst.plots.plot_quadrants(
-                data=[x, y], x=x_center, y=y_center, quadrant_color=[None] * 4,
-                line_color=(0.99, 0.99, 0.99, 0.5), fill_color=(0.81, 0.81, 0.81, 0.3),
-            )
-    plt.subplots_adjust(
-        hspace=0, wspace=0,
-        top=0.98, bottom=0.15,
-        left=0.08, right=0.88,
-    )
-    return fig, axes
 
 def plot_monte_carlo():
     fig, axes = plot_scatter_1d(
@@ -95,6 +50,28 @@ def plot_monte_carlo():
         x_center=1,
         zticks=None,
     )
+    bst.plots.set_font(size=9)
+    bst.plots.set_figure_size(width='full', aspect_ratio=0.65)
+    pm = pyrolysis.WasteTirePyrolysisProcess(simulate=False)
+    metrics = [pm.IRR, pm.GWP, pm.FEDI]
+    Xi, Yi, Zi = [i.index for i in metrics]
+    dfs = [get_monte_carlo(i, metrics) for i in name]
+    xs = np.array([df[Xi].values for df in dfs]) * xscale
+    ys = np.array([df[Yi].values for df in dfs]) * yscale
+    zs = np.array([df[Zi].values for df in dfs]) * zscale
+    fig, axes = bst.plots.plot_scatter_1d(
+        xs=xs, ys=ys, zs=zs,
+        xticks=xticks,
+        yticks=yticks,
+        zticks=zticks,
+        xticklabels=ticklabels, 
+        yticklabels=ticklabels,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        autobox=False,
+    )
+    
+    
     plt.subplots_adjust(
         wspace=0,
         top=0.85,
