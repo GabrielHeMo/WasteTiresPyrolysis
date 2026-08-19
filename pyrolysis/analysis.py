@@ -17,9 +17,6 @@ def run_montecarlo():
     np.random.seed(1)
     samples = pm.model.sample(N_samples, 'L')
     pm.model.load_samples(samples)
-    
-    
-    
     for n, processing_capacity in enumerate(pyrolysis.key_processing_capacities):
         autoload_file = os.path.join(results_folder, f'monte_carlo_backup_{n}')
         spearman_file = os.path.join(results_folder, f'spearman_{n}.xlsx')

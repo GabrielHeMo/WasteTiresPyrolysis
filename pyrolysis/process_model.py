@@ -25,7 +25,7 @@ class WasteTirePyrolysisProcess(bst.ProcessModel):
             rubber=100 - ash - moisture, ash=ash, moisture=moisture, # Overall composition
         )
         original = self.feedstock.imol['Tire']
-        new = 100 * self.processing_capacity / (100 - moisture)
+        new = 100 * self.processing_capacity / (100 - moisture) / self.tea.operating_hours * 1000
         if original:
             self.system.rescale(self.feedstock, new / original)
         else:
